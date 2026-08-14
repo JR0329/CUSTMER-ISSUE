@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>客訴快速填單</title>
+
+<!-- PWA 安裝設定 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2F5496">
+
+<!-- iOS「加到主畫面」專屬設定 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="客訴填單">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Microsoft JhengHei", "PingFang TC", Arial, sans-serif;
+    background: #f2f4f7;
+    margin: 0;
+    padding: 0 0 100px 0;
+    color: #222;
+  }
+  header {
+    background: #2F5496;
+    color: white;
+    padding: 18px 16px;
+    font-size: 20px;
+    font-weight: bold;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  header .sub {
+    font-size: 13px;
+    font-weight: normal;
+    opacity: 0.85;
+    margin-top: 2px;
+  }
+  form {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+  .field {
+    background: white;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  }
+  .field label {
+    display: block;
+    font-size: 14px;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 6px;
+  }
+  .field label .required {
+    color: #d33;
+    font-weight: normal;
+    font-size: 12px;
+  }
+  .field input, .field textarea {
+    width: 100%;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 16px; /* 16px以上避免iOS自動放大畫面 */
+    font-family: inherit;
+  }
+  .field textarea {
+    resize: vertical;
+    min-height: 70px;
+  }
+  .note {
+    font-size: 13px;
+    color: #888;
+    padding: 4px 6px 16px 6px;
+    line-height: 1.5;
+  }
+  .fallback {
+    display: none;
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+  }
+  .fallback.show { display: block; }
+  .fallback p {
+    font-size: 13px;
+    color: #6b5900;
+    margin: 0 0 8px 0;
+    line-height: 1.5;
+  }
+  .fallback textarea {
+    width: 100%;
+    height: 90px;
+    font-family: monospace;
+    font-size: 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px;
+  }
+  .fallback button {
+    margin-top: 8px;
+    width: 100%;
+    background: #f9a825;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 14px;
+    font-weight: bold;
+  }
+  .submit-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    padding: 12px 16px;
+    box-shadow: 0 -2px 6px rgba(0,0,0,0.08);
+  }
+  .submit-bar button {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 0 auto;
+    background: #2F5496;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 17px;
+    font-weight: bold;
+  }
+  .submit-bar button:active { background: #24406f; }
+  .toast {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #2e7d32;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    max-width: 90%;
+    text-align: center;
+    display: none;
+    z-index: 20;
+  }
+  .toast.error { background: #c62828; }
+</style>
+</head>
+<body>
+
+<header>
+  客訴快速填單
+  <div class="sub">填完按下方送出，會下載一個小檔案，請把它傳給資料庫負責人整理</div>
+</header>
+
+<div class="toast" id="toast"></div>
+
+<form id="complaintForm">
+  <div class="field">
+    <label>異常現象描述 <span class="required">（必填）</span></label>
+    <textarea id="f_phenomenon" rows="4" placeholder="請描述看到的異常現象..."></textarea>
+  </div>
+
+  <div class="field">
+    <label>通報單位/客戶名稱</label>
+    <input type="text" id="f_customer">
+  </div>
+
+  <div class="field">
+    <label>抱怨接獲者</label>
+    <input type="text" id="f_receiver">
+  </div>
+
+  <div class="field">
+    <label>抱怨日期</label>
+    <input type="date" id="f_date">
+  </div>
+
+  <div class="field">
+    <label>零件編號 (Source)</label>
+    <input type="text" id="f_partno">
+  </div>
+
+  <div class="field">
+    <label>相關設備/型號</label>
+    <input type="text" id="f_device">
+  </div>
+
+  <div class="field">
+    <label>懷疑根因與驗證過程（現場初步判斷，選填）</label>
+    <textarea id="f_cause" rows="3"></textarea>
+  </div>
+
+  <div class="field">
+    <label>矯正行動擬定（選填）</label>
+    <textarea id="f_action" rows="3"></textarea>
+  </div>
+
+  <div class="note">
+    ※ 矯正有效性、根因確認狀態等欄位不需要現在填寫，之後結案分析時由負責人回頭補齊。<br>
+    ※ 此頁面完全離線運作，送出後只是把資料存成檔案下載到本機，不會自動上傳到任何伺服器。
+  </div>
+</form>
+
+<div class="fallback" id="fallbackBox">
+  <p>⚠ 如果剛剛按送出沒有自動下載檔案（部分手機瀏覽環境會擋下自動下載），
+  請從下方文字框「全選」→「複製」，貼到記事本或訊息中傳給資料庫負責人：</p>
+  <textarea id="fallbackText" readonly></textarea>
+  <button onclick="copyFallback()">一鍵複製</button>
+</div>
+
+<div class="submit-bar">
+  <button id="submitBtn" onclick="submitForm()">送出（下載填單檔案）</button>
+</div>
+
+<script>
+// 設定日期欄位預設為今天
+document.getElementById('f_date').valueAsDate = new Date();
+
+function showToast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast' + (isError ? ' error' : '');
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+
+function csvEscape(value) {
+  const v = (value || '').toString();
+  return '"' + v.replace(/"/g, '""') + '"';
+}
+
+function copyFallback() {
+  const textarea = document.getElementById('fallbackText');
+  textarea.select();
+  textarea.setSelectionRange(0, 999999); // 手機瀏覽器相容寫法
+  try {
+    document.execCommand('copy');
+    showToast('已複製，請貼到記事本或訊息中傳出', false);
+  } catch (e) {
+    showToast('複製失敗，請手動長按文字框選取全部內容', true);
+  }
+}
+
+// 註冊 Service Worker，讓這個網頁能被安裝並離線使用
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((err) => {
+      console.log("Service Worker 註冊失敗:", err);
+    });
+  });
+}
+
+function submitForm() {
+  const phenomenon = document.getElementById('f_phenomenon').value.trim();
+  if (!phenomenon) {
+    showToast('「異常現象描述」為必填欄位，請填寫後再送出', true);
+    document.getElementById('f_phenomenon').focus();
+    return;
+  }
+
+  const now = new Date();
+  const pad = n => n.toString().padStart(2, '0');
+  const timestamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+  const fields = {
+    "通報單位/客戶名稱": document.getElementById('f_customer').value,
+    "抱怨接獲者": document.getElementById('f_receiver').value,
+    "抱怨日期": document.getElementById('f_date').value,
+    "零件編號(Source)": document.getElementById('f_partno').value,
+    "相關設備/型號": document.getElementById('f_device').value,
+    "異常現象描述": phenomenon,
+    "懷疑根因與驗證過程": document.getElementById('f_cause').value,
+    "矯正行動擬定": document.getElementById('f_action').value,
+    "案件來源檔案": "現場填單_" + timestamp,
+  };
+
+  const headers = Object.keys(fields);
+  const headerLine = headers.map(csvEscape).join(',');
+  const dataLine = headers.map(h => csvEscape(fields[h])).join(',');
+  // 加上UTF-8 BOM，確保Excel直接雙擊打開時中文不會變亂碼
+  const csvContent = '\ufeff' + headerLine + '\r\n' + dataLine + '\r\n';
+
+  // 先把內容準備進備用文字框(不管自動下載成不成功都先顯示，作為保險)
+  const fallbackText = headerLine + '\n' + dataLine;
+  document.getElementById('fallbackText').value = fallbackText;
+  document.getElementById('fallbackBox').classList.add('show');
+
+  let downloadWorked = false;
+  try {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `客訴填單_${timestamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    downloadWorked = true;
+  } catch (e) {
+    downloadWorked = false;
+  }
+
+  if (downloadWorked) {
+    showToast('已下載填單檔案，請傳給資料庫負責人', false);
+  } else {
+    showToast('自動下載失敗，請用下方「一鍵複製」改傳文字內容', true);
+  }
+
+  // 清空表單，日期保留方便連續填寫同一天多筆
+  document.getElementById('f_phenomenon').value = '';
+  document.getElementById('f_customer').value = '';
+  document.getElementById('f_receiver').value = '';
+  document.getElementById('f_partno').value = '';
+  document.getElementById('f_device').value = '';
+  document.getElementById('f_cause').value = '';
+  document.getElementById('f_action').value = '';
+}
+</script>
+
+</body>
+</html>

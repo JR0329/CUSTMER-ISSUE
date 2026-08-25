@@ -63,13 +63,14 @@
     font-weight: normal;
     font-size: 12px;
   }
-  .field input, .field textarea {
+  .field input, .field textarea, .field select {
     width: 100%;
     border: 1px solid #ccc;
     border-radius: 6px;
     padding: 10px;
     font-size: 16px; /* 16px以上避免iOS自動放大畫面 */
     font-family: inherit;
+    background: white;
   }
   .field textarea {
     resize: vertical;
@@ -174,7 +175,18 @@
 
   <div class="field">
     <label>通報單位/客戶名稱</label>
-    <input type="text" id="f_customer">
+    <select id="f_customer_select" onchange="toggleCustomerOther()">
+      <option value="">請選擇...</option>
+      <option value="台南 TTIP">台南 TTIP</option>
+      <option value="觀音 Linde">觀音 Linde</option>
+      <option value="台南 Linde">台南 Linde</option>
+      <option value="旺宏 MXIC">旺宏 MXIC</option>
+      <option value="台積電 F15a">台積電 F15a</option>
+      <option value="台積電 F15b">台積電 F15b</option>
+      <option value="其他">其他（請自行輸入）</option>
+    </select>
+    <input type="text" id="f_customer_other" placeholder="請輸入客戶名稱"
+           style="display:none; margin-top:8px;">
   </div>
 
   <div class="field">
@@ -185,11 +197,6 @@
   <div class="field">
     <label>抱怨日期</label>
     <input type="date" id="f_date">
-  </div>
-
-  <div class="field">
-    <label>零件編號 (Source)</label>
-    <input type="text" id="f_partno">
   </div>
 
   <div class="field">
@@ -227,6 +234,26 @@
 <script>
 // 設定日期欄位預設為今天
 document.getElementById('f_date').valueAsDate = new Date();
+
+function toggleCustomerOther() {
+  const select = document.getElementById('f_customer_select');
+  const otherInput = document.getElementById('f_customer_other');
+  if (select.value === '其他') {
+    otherInput.style.display = 'block';
+    otherInput.focus();
+  } else {
+    otherInput.style.display = 'none';
+    otherInput.value = '';
+  }
+}
+
+function getCustomerValue() {
+  const select = document.getElementById('f_customer_select');
+  if (select.value === '其他') {
+    return document.getElementById('f_customer_other').value.trim();
+  }
+  return select.value;
+}
 
 function showToast(msg, isError) {
   const t = document.getElementById('toast');
@@ -275,10 +302,9 @@ function submitForm() {
   const timestamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
   const fields = {
-    "通報單位/客戶名稱": document.getElementById('f_customer').value,
+    "通報單位/客戶名稱": getCustomerValue(),
     "抱怨接獲者": document.getElementById('f_receiver').value,
     "抱怨日期": document.getElementById('f_date').value,
-    "零件編號(Source)": document.getElementById('f_partno').value,
     "相關設備/型號": document.getElementById('f_device').value,
     "異常現象描述": phenomenon,
     "懷疑根因與驗證過程": document.getElementById('f_cause').value,
@@ -321,9 +347,10 @@ function submitForm() {
 
   // 清空表單，日期保留方便連續填寫同一天多筆
   document.getElementById('f_phenomenon').value = '';
-  document.getElementById('f_customer').value = '';
+  document.getElementById('f_customer_select').value = '';
+  document.getElementById('f_customer_other').value = '';
+  document.getElementById('f_customer_other').style.display = 'none';
   document.getElementById('f_receiver').value = '';
-  document.getElementById('f_partno').value = '';
   document.getElementById('f_device').value = '';
   document.getElementById('f_cause').value = '';
   document.getElementById('f_action').value = '';

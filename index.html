@@ -14,6 +14,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="客訴填單">
 <link rel="apple-touch-icon" href="icon-192.png">
+<!-- EmailJS：送出表單時自動寄信通知負責人用 -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -216,7 +218,7 @@
 
   <div class="note">
     ※ 矯正有效性、根因確認狀態等欄位不需要現在填寫，之後結案分析時由負責人回頭補齊。<br>
-    ※ 此頁面完全離線運作，送出後只是把資料存成檔案下載到本機，不會自動上傳到任何伺服器。
+    ※ 送出後會把資料存成檔案下載到本機（永遠會保留），同時會嘗試自動寄信通知負責人信箱；如果當下沒有網路，寄信會失敗但本機檔案不受影響，請改用下方「一鍵複製」傳送。
   </div>
 </form>
 
@@ -232,6 +234,14 @@
 </div>
 
 <script>
+// EmailJS 設定值（Public Key可公開放在前端，不是密碼；Service/Template ID也不是密碼）
+const EMAILJS_PUBLIC_KEY = "ccnWdZoeh8v_Btc7R";
+const EMAILJS_SERVICE_ID = "service_lapp2xn";
+const EMAILJS_TEMPLATE_ID = "template_aj6mhqp";
+if (window.emailjs) {
+  emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+}
+
 // 設定日期欄位預設為今天
 document.getElementById('f_date').valueAsDate = new Date();
 
@@ -289,7 +299,7 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-function submitForm() {
+async function submitForm() {
   const phenomenon = document.getElementById('f_phenomenon').value.trim();
   if (!phenomenon) {
     showToast('「異常現象描述」為必填欄位，請填寫後再送出', true);
@@ -301,14 +311,21 @@ function submitForm() {
   const pad = n => n.toString().padStart(2, '0');
   const timestamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
+  const customerValue = getCustomerValue();
+  const receiverValue = document.getElementById('f_receiver').value;
+  const dateValue = document.getElementById('f_date').value;
+  const deviceValue = document.getElementById('f_device').value;
+  const causeValue = document.getElementById('f_cause').value;
+  const actionValue = document.getElementById('f_action').value;
+
   const fields = {
-    "通報單位/客戶名稱": getCustomerValue(),
-    "抱怨接獲者": document.getElementById('f_receiver').value,
-    "抱怨日期": document.getElementById('f_date').value,
-    "相關設備/型號": document.getElementById('f_device').value,
+    "通報單位/客戶名稱": customerValue,
+    "抱怨接獲者": receiverValue,
+    "抱怨日期": dateValue,
+    "相關設備/型號": deviceValue,
     "異常現象描述": phenomenon,
-    "懷疑根因與驗證過程": document.getElementById('f_cause').value,
-    "矯正行動擬定": document.getElementById('f_action').value,
+    "懷疑根因與驗證過程": causeValue,
+    "矯正行動擬定": actionValue,
     "案件來源檔案": "現場填單_" + timestamp,
   };
 
@@ -339,11 +356,40 @@ function submitForm() {
     downloadWorked = false;
   }
 
-  if (downloadWorked) {
-    showToast('已下載填單檔案，請傳給資料庫負責人', false);
-  } else {
-    showToast('自動下載失敗，請用下方「一鍵複製」改傳文字內容', true);
+  // 嘗試自動寄信通知負責人信箱 (收件人固定在EmailJS template裡設定好)，
+  // 不管成功或失敗都要讓使用者看到明確結果，不能悄悄失敗。
+  let emailWorked = false;
+  const submitBtn = document.getElementById('submitBtn');
+  const originalBtnText = submitBtn.textContent;
+  try {
+    if (!window.emailjs) {
+      throw new Error('EmailJS SDK未載入');
+    }
+    submitBtn.textContent = '寄送通知中...';
+    submitBtn.disabled = true;
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      customer: customerValue,
+      receiver: receiverValue,
+      date: dateValue,
+      device: deviceValue,
+      phenomenon: phenomenon,
+      cause: causeValue,
+      action: actionValue,
+    });
+    emailWorked = true;
+  } catch (e) {
+    emailWorked = false;
+    console.log('EmailJS 寄信失敗:', e);
+  } finally {
+    submitBtn.textContent = originalBtnText;
+    submitBtn.disabled = false;
   }
+
+  // 合併下載與寄信兩邊的結果，一次跳通知，絕不讓使用者誤以為「送出=已經通知到負責人」
+  const downloadMsg = downloadWorked ? '已下載填單檔案' : '自動下載失敗(請用下方「一鍵複製」)';
+  const emailMsg = emailWorked ? '已自動寄信通知負責人' : '寄信失敗(可能無網路，本機檔案不受影響)';
+  const isError = !downloadWorked || !emailWorked;
+  showToast(`${downloadMsg}；${emailMsg}`, isError);
 
   // 清空表單，日期保留方便連續填寫同一天多筆
   document.getElementById('f_phenomenon').value = '';

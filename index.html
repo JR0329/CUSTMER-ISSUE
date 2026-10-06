@@ -348,7 +348,7 @@ const CLOUDINARY_CLOUD_NAME = "de9677dp";
 const CLOUDINARY_UPLOAD_PRESET = "g0gnp6qv";
 const MAX_PHOTOS = 3;
 
-const APP_VERSION = 'v5 (2026-10-06)';
+const APP_VERSION = 'v6 (2026-10-06)';
 document.getElementById('appVersion').textContent = APP_VERSION;
 
 // 設定日期欄位預設為今天
@@ -633,6 +633,17 @@ async function uploadPhoto(p) {
   return p.uploadedUrl;
 }
 
+async function uploadCsv(csv, timestamp) {
+  const fd = new FormData();
+  fd.append('file', new Blob([csv.content], { type: 'text/csv' }), 'complaint.csv');
+  fd.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  fd.append('public_id', 'complaint_' + timestamp + '.csv');
+  const res = await withTimeout(fetch('https://api.cloudinary.com/v1_1/' + CLOUDINARY_CLOUD_NAME + '/raw/upload', { method: 'POST', body: fd }), 30000);
+  const data = await res.json();
+  if (!res.ok || !data.secure_url) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+  return data.secure_url;
+}
+
 function clearForm() {
   photos.forEach((p) => URL.revokeObjectURL(p.thumbUrl));
   photos = [];
@@ -726,7 +737,22 @@ async function submitForm() {
       lastCsv = { content: '\ufeff' + h2 + '\r\n' + d2 + '\r\n', filename: lastCsv.filename };
       document.getElementById('fallbackText').value = h2 + '\n' + d2;
     }
-    const photoText = photoLinks.length ? '\n\n【現場照片】\n' + photoLinks.join('\n') : '';
+    // 把 CSV(Excel 可開)傳到雲端，信裡附下載連結；失敗不影響寄信
+    let csvLink = '';
+    let csvFailed = false;
+    if (photosEnabled) {
+      try {
+        openModal('wait', '⏳', '準備 Excel 檔...', '請稍候，請不要關閉畫面。', []);
+        csvLink = await uploadCsv(lastCsv, timestamp);
+      } catch (ce) {
+        csvFailed = true;
+        console.log('CSV 上傳失敗:', ce);
+      }
+      openModal('wait', '⏳', '寄送中...', '請稍候，正在通知管理員，請不要關閉畫面。', []);
+    }
+    const photoText = (photoLinks.length ? '\n\n【現場照片】\n' + photoLinks.join('\n') : '')
+      + (csvLink ? '\n\n【Excel/CSV 檔下載】\n' + csvLink : '')
+      + (csvFailed ? '\n\n（CSV 檔連結產生失敗，請向填單人索取）' : '');
     const result = await withTimeout(emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       customer: customerValue,
       receiver: receiverValue,

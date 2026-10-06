@@ -220,6 +220,22 @@
   .modal-actions button.primary { background: #2F5496; color: white; }
   .modal-actions button.danger { background: #c62828; color: white; }
   .modal-actions button:active { opacity: 0.8; }
+
+  /* 照片區 */
+  .photo-btns { display: flex; gap: 10px; }
+  .photo-btns button {
+    flex: 1; border: 1px solid #2F5496; background: #eef2fa; color: #2F5496;
+    border-radius: 8px; padding: 12px 6px; font-size: 15px; font-weight: bold;
+  }
+  .photo-btns button:disabled { opacity: 0.4; }
+  .photo-hint { font-size: 12px; color: #888; margin-top: 6px; }
+  .photo-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .photo-item { position: relative; width: 92px; height: 92px; }
+  .photo-item img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; }
+  .photo-item .rm {
+    position: absolute; top: -8px; right: -8px; width: 26px; height: 26px; border-radius: 50%;
+    border: none; background: #c62828; color: white; font-size: 15px; line-height: 26px; padding: 0;
+  }
 </style>
 </head>
 <body>
@@ -244,6 +260,18 @@
   <div class="field">
     <label>異常現象描述 <span class="required">（必填）</span></label>
     <textarea id="f_phenomenon" rows="4" placeholder="請描述看到的異常現象..."></textarea>
+  </div>
+
+  <div class="field" id="photoField" style="display:none;">
+    <label>現場照片 <span class="required" style="color:#888;">（選填，最多 3 張）</span></label>
+    <div class="photo-btns">
+      <button type="button" id="btnCamera" onclick="document.getElementById('f_photo_camera').click()">📷 拍照</button>
+      <button type="button" id="btnAlbum" onclick="document.getElementById('f_photo_album').click()">🖼 從相簿選</button>
+    </div>
+    <input type="file" id="f_photo_camera" accept="image/*" capture="environment" style="display:none;">
+    <input type="file" id="f_photo_album" accept="image/*" multiple style="display:none;">
+    <div class="photo-grid" id="photoGrid"></div>
+    <div class="photo-hint">照片會先在手機縮小，送出時上傳雲端，並把連結附在通知信裡。</div>
   </div>
 
   <div class="field">
@@ -314,7 +342,13 @@ if (window.emailjs) {
 }
 
 // 版本號：顯示在頁首，方便確認手機上跑的是不是最新版
-const APP_VERSION = 'v4 (2026-10-06)';
+// 照片上傳設定（Cloudinary，unsigned preset；cloud name 與 preset 名稱不是密碼）
+// 兩個都填好才會顯示「現場照片」欄位
+const CLOUDINARY_CLOUD_NAME = "de9677dp";
+const CLOUDINARY_UPLOAD_PRESET = "g0gnp6qv";
+const MAX_PHOTOS = 3;
+
+const APP_VERSION = 'v5 (2026-10-06)';
 document.getElementById('appVersion').textContent = APP_VERSION;
 
 // 設定日期欄位預設為今天
@@ -507,7 +541,103 @@ function downloadCsv() {
   }
 }
 
+// ===== 照片 =====
+let photos = [];       // { blob, thumbUrl, uploadedUrl }
+let skipPhotos = false;
+
+const photosEnabled = !!(CLOUDINARY_CLOUD_NAME && CLOUDINARY_UPLOAD_PRESET);
+if (photosEnabled) document.getElementById('photoField').style.display = 'block';
+
+function compressImage(file, maxSide, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let w = img.naturalWidth, h = img.naturalHeight;
+        const scale = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.round(w * scale); h = Math.round(h * scale);
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        c.toBlob((b) => {
+          URL.revokeObjectURL(url);
+          b ? resolve(b) : reject(new Error('照片壓縮失敗'));
+        }, 'image/jpeg', quality);
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('無法讀取這張照片')); };
+    img.src = url;
+  });
+}
+
+function renderPhotos() {
+  const grid = document.getElementById('photoGrid');
+  grid.innerHTML = '';
+  photos.forEach((p, i) => {
+    const d = document.createElement('div');
+    d.className = 'photo-item';
+    const im = document.createElement('img');
+    im.src = p.thumbUrl;
+    const rm = document.createElement('button');
+    rm.type = 'button'; rm.className = 'rm'; rm.textContent = '✕';
+    rm.onclick = () => {
+      URL.revokeObjectURL(p.thumbUrl);
+      photos.splice(i, 1);
+      renderPhotos();
+    };
+    d.appendChild(im); d.appendChild(rm);
+    grid.appendChild(d);
+  });
+  const full = photos.length >= MAX_PHOTOS;
+  document.getElementById('btnCamera').disabled = full;
+  document.getElementById('btnAlbum').disabled = full;
+}
+
+async function addPhotoFiles(fileList) {
+  const files = Array.from(fileList || []);
+  let skipped = 0;
+  for (const f of files) {
+    if (photos.length >= MAX_PHOTOS) { skipped++; continue; }
+    try {
+      const blob = await compressImage(f, 1280, 0.75);
+      photos.push({ blob, thumbUrl: URL.createObjectURL(blob), uploadedUrl: null });
+    } catch (e) {
+      showToast('照片處理失敗：' + (e.message || e), true);
+    }
+  }
+  renderPhotos();
+  if (skipped) showToast('最多只能附 ' + MAX_PHOTOS + ' 張，多的已略過', true);
+}
+['f_photo_camera', 'f_photo_album'].forEach((id) => {
+  document.getElementById(id).addEventListener('change', (ev) => {
+    addPhotoFiles(ev.target.files);
+    ev.target.value = '';   // 允許連續選同一張或再拍一張
+  });
+});
+
+async function uploadPhoto(p) {
+  if (p.uploadedUrl) return p.uploadedUrl;
+  const fd = new FormData();
+  fd.append('file', p.blob, 'photo.jpg');
+  fd.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  const res = await withTimeout(fetch('https://api.cloudinary.com/v1_1/' + CLOUDINARY_CLOUD_NAME + '/image/upload', { method: 'POST', body: fd }), 40000);
+  let data = null;
+  try { data = await res.json(); } catch (_) {}
+  if (!res.ok || !data || !data.secure_url) {
+    const err = new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+    err.status = res.status;
+    throw err;
+  }
+  p.uploadedUrl = data.secure_url;
+  return p.uploadedUrl;
+}
+
 function clearForm() {
+  photos.forEach((p) => URL.revokeObjectURL(p.thumbUrl));
+  photos = [];
+  renderPhotos();
+  skipPhotos = false;
   document.getElementById('f_phenomenon').value = '';
   document.getElementById('f_customer_select').value = '';
   document.getElementById('f_customer_other').value = '';
@@ -522,6 +652,8 @@ function clearForm() {
 
 async function submitForm() {
   if (isSending) return;
+  const skipThis = skipPhotos;
+  skipPhotos = false;
 
   const phenomenon = document.getElementById('f_phenomenon').value.trim();
   if (!phenomenon) {
@@ -565,6 +697,8 @@ async function submitForm() {
   let emailTimedOut = false;
   let emailWorked = false;
   let emailErrorDetail = '';
+  let photoFailed = false;
+  let photoLinks = [];
   const submitBtn = document.getElementById('submitBtn');
   const originalBtnText = submitBtn.textContent;
   try {
@@ -574,12 +708,31 @@ async function submitForm() {
     submitBtn.textContent = '寄送中...';
     submitBtn.disabled = true;
     openModal('wait', '⏳', '寄送中...', '請稍候，正在通知管理員，請不要關閉畫面。', []);
+    if (photosEnabled && !skipThis && photos.length) {
+      for (let i = 0; i < photos.length; i++) {
+        openModal('wait', '⏳', '上傳照片中...', '第 ' + (i + 1) + ' / ' + photos.length + ' 張，請稍候，請不要關閉畫面。', []);
+        try {
+          photoLinks.push(await uploadPhoto(photos[i]));
+        } catch (pe) {
+          photoFailed = true;
+          throw pe;
+        }
+      }
+      openModal('wait', '⏳', '寄送中...', '請稍候，正在通知管理員，請不要關閉畫面。', []);
+    }
+    if (photoLinks.length) {
+      const h2 = headerLine + ',' + csvEscape('照片連結');
+      const d2 = dataLine + ',' + csvEscape(photoLinks.join('\n'));
+      lastCsv = { content: '\ufeff' + h2 + '\r\n' + d2 + '\r\n', filename: lastCsv.filename };
+      document.getElementById('fallbackText').value = h2 + '\n' + d2;
+    }
+    const photoText = photoLinks.length ? '\n\n【現場照片】\n' + photoLinks.join('\n') : '';
     const result = await withTimeout(emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       customer: customerValue,
       receiver: receiverValue,
       date: dateValue,
       device: deviceValue,
-      phenomenon: phenomenon,
+      phenomenon: phenomenon + photoText,
       cause: causeValue,
       action: actionValue,
     }), 20000);
@@ -587,7 +740,7 @@ async function submitForm() {
     emailWorked = true;
   } catch (e) {
     emailWorked = false;
-    emailTimedOut = !!(e && e.isTimeout);
+    emailTimedOut = !!(e && e.isTimeout) && !photoFailed;
     // 把實際錯誤內容顯示在失敗視窗裡，方便回報問題
     const statusPart = (e && typeof e.status !== 'undefined') ? `status=${e.status}` : '';
     const textPart = (e && e.text) ? e.text : '';
@@ -620,11 +773,12 @@ async function submitForm() {
       ]);
   } else {
     document.getElementById('fallbackBox').classList.add('show');
-    openModal('fail', '⚠️', '寄信失敗',
-      '管理員<b>可能尚未</b>收到通知，你填的內容還保留在表單中。可以先下載檔案或一鍵複製留存，等網路恢復後按「重新送出」。' +
+    openModal('fail', '⚠️', photoFailed ? '照片上傳失敗' : '寄信失敗',
+      (photoFailed ? '照片沒有上傳成功，<b>信還沒寄出</b>，你填的內容還保留在表單中。可以重新送出，或先不帶照片直接寄出。' : '管理員<b>可能尚未</b>收到通知，你填的內容還保留在表單中。可以先下載檔案或一鍵複製留存，等網路恢復後按「重新送出」。') +
       '<div class="modal-detail">' + escapeHtml(emailErrorDetail) + '</div>',
       [
         { label: '重新送出', cls: 'primary', onClick: () => { closeModal(); submitForm(); } },
+        ...(photoFailed ? [{ label: '不帶照片直接寄出', onClick: () => { skipPhotos = true; closeModal(); submitForm(); } }] : []),
         { label: '下載檔案', onClick: downloadCsv },
         { label: '一鍵複製', onClick: copyFallback },
         { label: '關閉（保留表單）', onClick: closeModal },

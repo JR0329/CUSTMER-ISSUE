@@ -159,16 +159,84 @@
     cursor: pointer;
   }
   .toast.error { background: #c62828; }
+
+  /* 送出結果視窗：不會自動消失，一定要按按鈕才會關閉 */
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: white;
+    border-radius: 14px;
+    padding: 24px 20px 18px 20px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+    text-align: center;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  }
+  .modal-icon { font-size: 44px; line-height: 1; margin-bottom: 8px; }
+  .modal-title { font-size: 20px; font-weight: bold; margin-bottom: 10px; }
+  .modal.ok .modal-title { color: #2e7d32; }
+  .modal.fail .modal-title { color: #c62828; }
+  .modal-msg {
+    font-size: 14px;
+    color: #444;
+    line-height: 1.6;
+    text-align: left;
+    margin-bottom: 16px;
+    word-break: break-word;
+  }
+  .modal-detail {
+    margin-top: 8px;
+    padding: 8px;
+    background: #f5f5f5;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #666;
+    font-family: monospace;
+  }
+  .modal-actions { display: flex; flex-direction: column; gap: 10px; }
+  .modal-actions button {
+    width: 100%;
+    border: none;
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: bold;
+    background: #e8eaf0;
+    color: #2F5496;
+  }
+  .modal-actions button.primary { background: #2F5496; color: white; }
+  .modal-actions button.danger { background: #c62828; color: white; }
+  .modal-actions button:active { opacity: 0.8; }
 </style>
 </head>
 <body>
 
 <header>
   客訴快速填單
-  <div class="sub">填完按下方送出，會下載一個小檔案，請把它傳給資料庫負責人整理</div>
+  <div class="sub">填完按下方送出，系統會自動通知管理員整理</div>
 </header>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal-backdrop" id="resultModal">
+  <div class="modal" id="modalBox">
+    <div class="modal-icon" id="modalIcon"></div>
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-msg" id="modalMsg"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
 
 <form id="complaintForm">
   <div class="field">
@@ -219,7 +287,7 @@
 
   <div class="note">
     ※ 矯正有效性、根因確認狀態等欄位不需要現在填寫，之後結案分析時由負責人回頭補齊。<br>
-    ※ 送出後會把資料存成檔案下載到本機（永遠會保留），同時會嘗試自動寄信通知負責人信箱；如果當下沒有網路，寄信會失敗但本機檔案不受影響，請改用下方「一鍵複製」傳送。
+    ※ 按送出後會自動寄信通知管理員，並跳出結果視窗。寄信成功可選擇是否下載備份檔；如果沒有網路導致寄信失敗，表單內容會保留，可在視窗中下載檔案、一鍵複製，或網路恢復後重新送出。
   </div>
 </form>
 
@@ -231,7 +299,7 @@
 </div>
 
 <div class="submit-bar">
-  <button id="submitBtn" onclick="submitForm()">送出（下載填單檔案）</button>
+  <button id="submitBtn" onclick="submitForm()">送出</button>
 </div>
 
 <script>
@@ -315,15 +383,22 @@ function csvEscape(value) {
   return '"' + v.replace(/"/g, '""') + '"';
 }
 
-function copyFallback() {
-  const textarea = document.getElementById('fallbackText');
-  textarea.select();
-  textarea.setSelectionRange(0, 999999); // 手機瀏覽器相容寫法
+async function copyFallback() {
+  const text = document.getElementById('fallbackText').value;
   try {
-    document.execCommand('copy');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.getElementById('fallbackText');
+      document.getElementById('fallbackBox').classList.add('show');
+      ta.select();
+      ta.setSelectionRange(0, 999999); // 手機瀏覽器相容寫法
+      if (!document.execCommand('copy')) throw new Error('copy failed');
+    }
     showToast('已複製，請貼到記事本或訊息中傳出', false);
   } catch (e) {
-    showToast('複製失敗，請手動長按文字框選取全部內容', true);
+    document.getElementById('fallbackBox').classList.add('show');
+    showToast('複製失敗，請在下方文字框長按選取全部內容後手動複製', true);
   }
 }
 
@@ -352,7 +427,72 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+// ===== 結果視窗 =====
+let lastCsv = null;     // { content, filename }：最近一次送出的CSV內容，供「下載」按鈕使用
+let isSending = false;  // 避免連按送出造成重複寄信
+
+function openModal(kind, icon, title, bodyHtml, actions) {
+  document.getElementById('modalBox').className = 'modal ' + kind;
+  document.getElementById('modalIcon').textContent = icon;
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalMsg').innerHTML = bodyHtml;
+  const box = document.getElementById('modalActions');
+  box.innerHTML = '';
+  actions.forEach((a) => {
+    const b = document.createElement('button');
+    b.textContent = a.label;
+    if (a.cls) b.className = a.cls;
+    b.onclick = a.onClick;
+    box.appendChild(b);
+  });
+  document.getElementById('resultModal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('resultModal').classList.remove('show');
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// 使用者主動按下「下載」才會觸發，所以系統的存檔畫面不會蓋掉結果視窗
+function downloadCsv() {
+  if (!lastCsv) return;
+  try {
+    const blob = new Blob([lastCsv.content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = lastCsv.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (e) {
+    document.getElementById('fallbackBox').classList.add('show');
+    showToast('自動下載失敗，請改用「一鍵複製」', true);
+  }
+}
+
+function clearForm() {
+  document.getElementById('f_phenomenon').value = '';
+  document.getElementById('f_customer_select').value = '';
+  document.getElementById('f_customer_other').value = '';
+  document.getElementById('f_customer_other').style.display = 'none';
+  document.getElementById('f_receiver').value = '';
+  document.getElementById('f_device').value = '';
+  document.getElementById('f_cause').value = '';
+  document.getElementById('f_action').value = '';
+  document.getElementById('fallbackBox').classList.remove('show');
+  lastCsv = null;
+}
+
 async function submitForm() {
+  if (isSending) return;
+
   const phenomenon = document.getElementById('f_phenomenon').value.trim();
   if (!phenomenon) {
     showToast('「異常現象描述」為必填欄位，請填寫後再送出', true);
@@ -387,39 +527,20 @@ async function submitForm() {
   const dataLine = headers.map(h => csvEscape(fields[h])).join(',');
   // 加上UTF-8 BOM，確保Excel直接雙擊打開時中文不會變亂碼
   const csvContent = '\ufeff' + headerLine + '\r\n' + dataLine + '\r\n';
+  lastCsv = { content: csvContent, filename: `客訴填單_${timestamp}.csv` };
+  document.getElementById('fallbackText').value = headerLine + '\n' + dataLine;
 
-  // 先把內容準備進備用文字框(不管自動下載成不成功都先顯示，作為保險)
-  const fallbackText = headerLine + '\n' + dataLine;
-  document.getElementById('fallbackText').value = fallbackText;
-  document.getElementById('fallbackBox').classList.add('show');
-
-  let downloadWorked = false;
-  try {
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `客訴填單_${timestamp}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    downloadWorked = true;
-  } catch (e) {
-    downloadWorked = false;
-  }
-
-  // 嘗試自動寄信通知負責人信箱 (收件人固定在EmailJS template裡設定好)，
-  // 不管成功或失敗都要讓使用者看到明確結果，不能悄悄失敗。
+  // 寄信通知管理員 (收件人固定在EmailJS template裡設定好)
+  isSending = true;
   let emailWorked = false;
   let emailErrorDetail = '';
   const submitBtn = document.getElementById('submitBtn');
   const originalBtnText = submitBtn.textContent;
   try {
     if (!window.emailjs) {
-      throw new Error('EmailJS SDK未載入');
+      throw new Error('EmailJS SDK未載入（可能沒有網路）');
     }
-    submitBtn.textContent = '寄送通知中...';
+    submitBtn.textContent = '寄送中...';
     submitBtn.disabled = true;
     const result = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       customer: customerValue,
@@ -434,11 +555,7 @@ async function submitForm() {
     emailWorked = true;
   } catch (e) {
     emailWorked = false;
-    // 暫時把實際錯誤內容直接顯示在提示訊息裡（除錯用），
-    // 這樣不用接電腦看console，直接看手機畫面或截圖就能知道卡在哪一步。
-    // status：HTTP狀態碼(例如0代表連線被擋下/逾時，而不是伺服器拒絕)
-    // text：伺服器回應的文字內容
-    // message：一般JS錯誤訊息
+    // 把實際錯誤內容顯示在失敗視窗裡，方便回報問題
     const statusPart = (e && typeof e.status !== 'undefined') ? `status=${e.status}` : '';
     const textPart = (e && e.text) ? e.text : '';
     const msgPart = (e && e.message) ? e.message : '';
@@ -447,23 +564,28 @@ async function submitForm() {
   } finally {
     submitBtn.textContent = originalBtnText;
     submitBtn.disabled = false;
+    isSending = false;
   }
 
-  // 合併下載與寄信兩邊的結果，一次跳通知，絕不讓使用者誤以為「送出=已經通知到負責人」
-  const downloadMsg = downloadWorked ? '已下載填單檔案' : '自動下載失敗(請用下方「一鍵複製」)';
-  const emailMsg = emailWorked ? '已自動發送給管理員' : `寄信顯示失敗(除錯用，請截圖回報：${emailErrorDetail})`;
-  const isError = !downloadWorked || !emailWorked;
-  showToast(`${downloadMsg}；${emailMsg}`, isError);
-
-  // 清空表單，日期保留方便連續填寫同一天多筆
-  document.getElementById('f_phenomenon').value = '';
-  document.getElementById('f_customer_select').value = '';
-  document.getElementById('f_customer_other').value = '';
-  document.getElementById('f_customer_other').style.display = 'none';
-  document.getElementById('f_receiver').value = '';
-  document.getElementById('f_device').value = '';
-  document.getElementById('f_cause').value = '';
-  document.getElementById('f_action').value = '';
+  if (emailWorked) {
+    openModal('ok', '✅', '已自動發送給管理員',
+      '填單內容已寄出。需要的話可以另外下載一份備份檔。',
+      [
+        { label: '下載備份檔案', onClick: downloadCsv },
+        { label: '確定', cls: 'primary', onClick: () => { closeModal(); clearForm(); } },
+      ]);
+  } else {
+    document.getElementById('fallbackBox').classList.add('show');
+    openModal('fail', '⚠️', '寄信失敗',
+      '管理員<b>尚未</b>收到通知，你填的內容還保留在表單中。可以先下載檔案或一鍵複製留存，等網路恢復後按「重新送出」。' +
+      '<div class="modal-detail">' + escapeHtml(emailErrorDetail) + '</div>',
+      [
+        { label: '重新送出', cls: 'primary', onClick: () => { closeModal(); submitForm(); } },
+        { label: '下載檔案', onClick: downloadCsv },
+        { label: '一鍵複製', onClick: copyFallback },
+        { label: '關閉（保留表單）', onClick: closeModal },
+      ]);
+  }
 }
 </script>
 

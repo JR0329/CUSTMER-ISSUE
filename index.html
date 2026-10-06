@@ -387,7 +387,7 @@ async function submitForm() {
 
   // 合併下載與寄信兩邊的結果，一次跳通知，絕不讓使用者誤以為「送出=已經通知到負責人」
   const downloadMsg = downloadWorked ? '已下載填單檔案' : '自動下載失敗(請用下方「一鍵複製」)';
-  const emailMsg = emailWorked ? '已自動寄信通知負責人' : '寄信失敗(可能無網路，本機檔案不受影響)';
+  const emailMsg = emailWorked ? '已自動發送給管理員' : '寄信失敗(可能無網路，本機檔案不受影響)';
   const isError = !downloadWorked || !emailWorked;
   showToast(`${downloadMsg}；${emailMsg}`, isError);
 

@@ -187,6 +187,8 @@
   .modal-title { font-size: 20px; font-weight: bold; margin-bottom: 10px; }
   .modal.ok .modal-title { color: #2e7d32; }
   .modal.fail .modal-title { color: #c62828; }
+  .modal.warn .modal-title { color: #e65100; }
+  .modal.wait .modal-title { color: #2F5496; }
   .modal-msg {
     font-size: 14px;
     color: #444;
@@ -224,7 +226,7 @@
 
 <header>
   客訴快速填單
-  <div class="sub">填完按下方送出，系統會自動通知管理員整理</div>
+  <div class="sub">填完按下方送出，系統會自動通知管理員整理　<span id="appVersion"></span></div>
 </header>
 
 <div class="toast" id="toast"></div>
@@ -310,6 +312,10 @@ const EMAILJS_TEMPLATE_ID = "template_aj6mhqp";
 if (window.emailjs) {
   emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 }
+
+// 版本號：顯示在頁首，方便確認手機上跑的是不是最新版
+const APP_VERSION = 'v4 (2026-10-06)';
+document.getElementById('appVersion').textContent = APP_VERSION;
 
 // 設定日期欄位預設為今天
 document.getElementById('f_date').valueAsDate = new Date();
@@ -410,7 +416,7 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").then((reg) => {
       const isUpdate = !!navigator.serviceWorker.controller;
-      reg.update();
+      reg.update().catch(function(){});
       reg.addEventListener('updatefound', () => {
         const newWorker = reg.installing;
         if (newWorker) {
@@ -426,6 +432,15 @@ if ("serviceWorker" in navigator) {
     });
   });
 }
+
+// 任何未預期的程式錯誤都顯示在畫面上，避免「按了沒反應」卻不知道原因
+window.addEventListener('error', (ev) => {
+  showToast('程式錯誤：' + (ev.message || '未知錯誤'), true);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  const r = ev.reason;
+  showToast('程式錯誤：' + ((r && (r.message || r.text)) || String(r)), true);
+});
 
 // ===== 結果視窗 =====
 let lastCsv = null;     // { content, filename }：最近一次送出的CSV內容，供「下載」按鈕使用
@@ -446,6 +461,21 @@ function openModal(kind, icon, title, bodyHtml, actions) {
     box.appendChild(b);
   });
   document.getElementById('resultModal').classList.add('show');
+}
+
+// 寄信逾時保護：避免網路卡住時畫面完全沒有任何回應
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error('等待回應超過 ' + (ms / 1000) + ' 秒');
+      err.isTimeout = true;
+      reject(err);
+    }, ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
 }
 
 function closeModal() {
@@ -532,6 +562,7 @@ async function submitForm() {
 
   // 寄信通知管理員 (收件人固定在EmailJS template裡設定好)
   isSending = true;
+  let emailTimedOut = false;
   let emailWorked = false;
   let emailErrorDetail = '';
   const submitBtn = document.getElementById('submitBtn');
@@ -542,7 +573,8 @@ async function submitForm() {
     }
     submitBtn.textContent = '寄送中...';
     submitBtn.disabled = true;
-    const result = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+    openModal('wait', '⏳', '寄送中...', '請稍候，正在通知管理員，請不要關閉畫面。', []);
+    const result = await withTimeout(emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       customer: customerValue,
       receiver: receiverValue,
       date: dateValue,
@@ -550,11 +582,12 @@ async function submitForm() {
       phenomenon: phenomenon,
       cause: causeValue,
       action: actionValue,
-    });
+    }), 20000);
     console.log('EmailJS 寄信成功:', result);
     emailWorked = true;
   } catch (e) {
     emailWorked = false;
+    emailTimedOut = !!(e && e.isTimeout);
     // 把實際錯誤內容顯示在失敗視窗裡，方便回報問題
     const statusPart = (e && typeof e.status !== 'undefined') ? `status=${e.status}` : '';
     const textPart = (e && e.text) ? e.text : '';
@@ -574,10 +607,21 @@ async function submitForm() {
         { label: '下載備份檔案', onClick: downloadCsv },
         { label: '確定', cls: 'primary', onClick: () => { closeModal(); clearForm(); } },
       ]);
+  } else if (emailTimedOut) {
+    document.getElementById('fallbackBox').classList.add('show');
+    openModal('warn', '❓', '無法確認是否寄出',
+      '等了 20 秒沒有收到回應，信<b>可能已寄出，也可能沒有</b>。請先向管理員確認是否收到，避免重複送出。你填的內容還保留在表單中。' +
+      '<div class="modal-detail">' + escapeHtml(emailErrorDetail) + '</div>',
+      [
+        { label: '下載檔案', cls: 'primary', onClick: downloadCsv },
+        { label: '一鍵複製', onClick: copyFallback },
+        { label: '重新送出', onClick: () => { closeModal(); submitForm(); } },
+        { label: '關閉（保留表單）', onClick: closeModal },
+      ]);
   } else {
     document.getElementById('fallbackBox').classList.add('show');
     openModal('fail', '⚠️', '寄信失敗',
-      '管理員<b>尚未</b>收到通知，你填的內容還保留在表單中。可以先下載檔案或一鍵複製留存，等網路恢復後按「重新送出」。' +
+      '管理員<b>可能尚未</b>收到通知，你填的內容還保留在表單中。可以先下載檔案或一鍵複製留存，等網路恢復後按「重新送出」。' +
       '<div class="modal-detail">' + escapeHtml(emailErrorDetail) + '</div>',
       [
         { label: '重新送出', cls: 'primary', onClick: () => { closeModal(); submitForm(); } },

@@ -156,6 +156,7 @@
     text-align: center;
     display: none;
     z-index: 20;
+    cursor: pointer;
   }
   .toast.error { background: #c62828; }
 </style>
@@ -265,12 +266,48 @@ function getCustomerValue() {
   return select.value;
 }
 
+let toastHideTimer = null;
+let toastVisibilityHandler = null;
+
 function showToast(msg, isError) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = 'toast' + (isError ? ' error' : '');
   t.style.display = 'block';
-  setTimeout(() => { t.style.display = 'none'; }, 3500);
+
+  // 手機上按送出後，瀏覽器通常會立刻彈出「下載/分享檔案」的原生畫面蓋住整個網頁，
+  // 這段期間網頁雖然還在跑，但使用者完全看不到提示。如果這時候倒數計時器還是照跑，
+  // 等使用者關閉那個畫面回來時，提示常常早就消失了，導致線上/離線看起來「都一樣」。
+  // 解法：如果提示顯示的當下網頁是被蓋住看不到的狀態(document.hidden)，就先不要倒數，
+  // 等使用者真正回到網頁畫面(visibilitychange變成visible)才開始倒數，確保一定看得到。
+  if (toastHideTimer) {
+    clearTimeout(toastHideTimer);
+    toastHideTimer = null;
+  }
+  if (toastVisibilityHandler) {
+    document.removeEventListener('visibilitychange', toastVisibilityHandler);
+    toastVisibilityHandler = null;
+  }
+
+  const scheduleHide = () => {
+    toastHideTimer = setTimeout(() => { t.style.display = 'none'; }, 5000);
+  };
+
+  if (document.hidden) {
+    toastVisibilityHandler = () => {
+      if (!document.hidden) {
+        document.removeEventListener('visibilitychange', toastVisibilityHandler);
+        toastVisibilityHandler = null;
+        scheduleHide();
+      }
+    };
+    document.addEventListener('visibilitychange', toastVisibilityHandler);
+  } else {
+    scheduleHide();
+  }
+
+  // 保險：萬一使用者沒注意到提示自動消失，提供點一下提示本身也能手動關閉
+  t.onclick = () => { t.style.display = 'none'; };
 }
 
 function csvEscape(value) {

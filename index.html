@@ -328,9 +328,25 @@ function copyFallback() {
 }
 
 // 註冊 Service Worker，讓這個網頁能被安裝並離線使用
+// 同時主動偵測新版本：已經加到主畫面的使用者，下次打開App時
+// 如果偵測到有新版本上線，會自動重新整理一次抓取最新內容，
+// 不用使用者自己想辦法清快取或重新安裝。
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((err) => {
+    navigator.serviceWorker.register("sw.js").then((reg) => {
+      const isUpdate = !!navigator.serviceWorker.controller;
+      reg.update();
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (newWorker) {
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'activated' && isUpdate) {
+              window.location.reload();
+            }
+          });
+        }
+      });
+    }).catch((err) => {
       console.log("Service Worker 註冊失敗:", err);
     });
   });

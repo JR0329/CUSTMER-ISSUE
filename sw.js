@@ -1,7 +1,9 @@
 // Service Worker：負責把App的內容快取下來，讓「加到主畫面」安裝後
 // 即使完全沒有網路，也能正常打開使用。
+// 版本號(v2)：每次更新index.html等檔案內容時，記得把這個版本號往上加一碼，
+// 這樣已經安裝的手機才會真的抓到新版本，不會一直卡在舊的快取畫面。
 
-const CACHE_NAME = "complaint-entry-v1";
+const CACHE_NAME = "complaint-entry-v2";
 const FILES_TO_CACHE = [
   "./index.html",
   "./manifest.json",

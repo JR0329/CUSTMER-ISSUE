@@ -412,6 +412,7 @@ async function submitForm() {
   // 嘗試自動寄信通知負責人信箱 (收件人固定在EmailJS template裡設定好)，
   // 不管成功或失敗都要讓使用者看到明確結果，不能悄悄失敗。
   let emailWorked = false;
+  let emailErrorDetail = '';
   const submitBtn = document.getElementById('submitBtn');
   const originalBtnText = submitBtn.textContent;
   try {
@@ -420,7 +421,7 @@ async function submitForm() {
     }
     submitBtn.textContent = '寄送通知中...';
     submitBtn.disabled = true;
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+    const result = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       customer: customerValue,
       receiver: receiverValue,
       date: dateValue,
@@ -429,9 +430,19 @@ async function submitForm() {
       cause: causeValue,
       action: actionValue,
     });
+    console.log('EmailJS 寄信成功:', result);
     emailWorked = true;
   } catch (e) {
     emailWorked = false;
+    // 暫時把實際錯誤內容直接顯示在提示訊息裡（除錯用），
+    // 這樣不用接電腦看console，直接看手機畫面或截圖就能知道卡在哪一步。
+    // status：HTTP狀態碼(例如0代表連線被擋下/逾時，而不是伺服器拒絕)
+    // text：伺服器回應的文字內容
+    // message：一般JS錯誤訊息
+    const statusPart = (e && typeof e.status !== 'undefined') ? `status=${e.status}` : '';
+    const textPart = (e && e.text) ? e.text : '';
+    const msgPart = (e && e.message) ? e.message : '';
+    emailErrorDetail = [statusPart, textPart, msgPart].filter(Boolean).join(' / ') || String(e);
     console.log('EmailJS 寄信失敗:', e);
   } finally {
     submitBtn.textContent = originalBtnText;
@@ -440,7 +451,7 @@ async function submitForm() {
 
   // 合併下載與寄信兩邊的結果，一次跳通知，絕不讓使用者誤以為「送出=已經通知到負責人」
   const downloadMsg = downloadWorked ? '已下載填單檔案' : '自動下載失敗(請用下方「一鍵複製」)';
-  const emailMsg = emailWorked ? '已自動發送給管理員' : '寄信失敗(可能無網路，本機檔案不受影響)';
+  const emailMsg = emailWorked ? '已自動發送給管理員' : `寄信顯示失敗(除錯用，請截圖回報：${emailErrorDetail})`;
   const isError = !downloadWorked || !emailWorked;
   showToast(`${downloadMsg}；${emailMsg}`, isError);
 

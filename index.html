@@ -236,6 +236,18 @@
     position: absolute; top: -8px; right: -8px; width: 26px; height: 26px; border-radius: 50%;
     border: none; background: #c62828; color: white; font-size: 15px; line-height: 26px; padding: 0;
   }
+
+.similar-btn{width:100%;margin-top:8px;padding:10px;font-size:15px;border:1px solid #2F5496;color:#2F5496;background:#fff;border-radius:8px}
+.similar-btn:disabled{opacity:.6}
+#similarPanel{margin-top:8px;font-size:14px}
+.sim-card{background:#f4f7fc;border-left:3px solid #2F5496;border-radius:6px;padding:8px 10px;margin-bottom:8px;line-height:1.5}
+.sim-card .sim-top{font-size:12px;color:#555;margin-bottom:2px}
+.sim-card .sim-k{color:#555;font-weight:bold}
+.sim-note{font-size:12px;color:#777;margin:4px 0}
+.sim-login input{width:100%;box-sizing:border-box;padding:10px;font-size:16px;border:1px solid #ccc;border-radius:8px;margin:6px 0}
+.sim-login button{padding:9px 14px;font-size:15px;border-radius:8px;border:none;background:#2F5496;color:#fff}
+.queue-banner{background:#fff4d6;color:#7a5600;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
+.queue-banner button{margin-left:6px;padding:5px 10px;border-radius:6px;border:1px solid #7a5600;background:#fff;color:#7a5600}
 </style>
 </head>
 <body>
@@ -261,6 +273,11 @@
     <label>異常現象描述 <span class="required">（必填）</span></label>
     <textarea id="f_phenomenon" rows="4" placeholder="請描述看到的異常現象..."></textarea>
   </div>
+  <div class="field" id="similarField">
+    <button type="button" class="similar-btn" id="btnSimilar">🔍 找相似過往案例（參考用）</button>
+    <div id="similarPanel"></div>
+  </div>
+
 
   <div class="field" id="photoField" style="display:none;">
     <label>現場照片 <span class="required" style="color:#888;">（選填，最多 3 張）</span></label>
@@ -348,7 +365,7 @@ const CLOUDINARY_CLOUD_NAME = "de9677dp";
 const CLOUDINARY_UPLOAD_PRESET = "g0gnp6qv";
 const MAX_PHOTOS = 3;
 
-const APP_VERSION = 'v6 (2026-10-06)';
+const APP_VERSION = 'v7 (2026-10-13)';
 document.getElementById('appVersion').textContent = APP_VERSION;
 
 // 設定日期欄位預設為今天
@@ -710,6 +727,7 @@ async function submitForm() {
   let emailErrorDetail = '';
   let photoFailed = false;
   let photoLinks = [];
+  let pendingParams = null;
   const submitBtn = document.getElementById('submitBtn');
   const originalBtnText = submitBtn.textContent;
   try {
@@ -753,6 +771,7 @@ async function submitForm() {
     const photoText = (photoLinks.length ? '\n\n【現場照片】\n' + photoLinks.join('\n') : '')
       + (csvLink ? '\n\n【Excel/CSV 檔下載】\n' + csvLink : '')
       + (csvFailed ? '\n\n（CSV 檔連結產生失敗，請向填單人索取）' : '');
+    pendingParams = { customer: customerValue, receiver: receiverValue, date: dateValue, device: deviceValue, phenomenon: phenomenon + photoText, cause: causeValue, action: actionValue };
     const result = await withTimeout(emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
       customer: customerValue,
       receiver: receiverValue,
@@ -780,6 +799,7 @@ async function submitForm() {
   }
 
   if (emailWorked) {
+    if (pendingParams) removeQueued(pendingParams);
     openModal('ok', '✅', '已自動發送給管理員',
       '填單內容已寄出。需要的話可以另外下載一份備份檔。',
       [
@@ -798,6 +818,9 @@ async function submitForm() {
         { label: '關閉（保留表單）', onClick: closeModal },
       ]);
   } else {
+    if (!photoFailed && pendingParams && enqueueSubmission(pendingParams)) {
+      emailErrorDetail += ' ／ 已暫存在這支手機，連上網路後會自動重送，不必重填（也請不要再重複填寫）';
+    }
     document.getElementById('fallbackBox').classList.add('show');
     openModal('fail', '⚠️', photoFailed ? '照片上傳失敗' : '寄信失敗',
       (photoFailed ? '照片沒有上傳成功，<b>信還沒寄出</b>，你填的內容還保留在表單中。可以重新送出，或先不帶照片直接寄出。' : '管理員<b>可能尚未</b>收到通知，你填的內容還保留在表單中。可以先下載檔案或一鍵複製留存，等網路恢復後按「重新送出」。') +
@@ -811,6 +834,136 @@ async function submitForm() {
       ]);
   }
 }
+
+// ===== v7：離線暫存 + 自動重送 =====
+const QUEUE_KEY = 'complaintQueueV1';
+function loadQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch (e) { return []; } }
+function saveQueue(q) { try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); return true; } catch (e) { return false; } }
+function queueKey(p) { return [p.date, p.customer, p.device, String(p.phenomenon).split(/\n\n[【（]/)[0]].join('|'); }
+function enqueueSubmission(p) {
+  const q = loadQueue();
+  if (!q.some(x => x.key === queueKey(p))) q.push({ key: queueKey(p), params: p, t: Date.now() });
+  const ok = saveQueue(q);
+  renderQueueBanner();
+  return ok;
+}
+function removeQueued(p) { saveQueue(loadQueue().filter(x => x.key !== queueKey(p))); renderQueueBanner(); }
+function renderQueueBanner() {
+  let b = document.getElementById('queueBanner');
+  const n = loadQueue().length;
+  if (!n) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement('div'); b.id = 'queueBanner'; b.className = 'queue-banner';
+    const f = document.getElementById('complaintForm'); f.parentNode.insertBefore(b, f);
+  }
+  b.textContent = '⏳ 有 ' + n + ' 筆填單尚未寄出，連上網路後會自動重送';
+  const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = '立即重送';
+  btn.onclick = () => flushQueue(true); b.appendChild(btn);
+}
+function ensureEmailjs() {
+  if (window.emailjs) return Promise.resolve(true);
+  return new Promise(res => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';
+    sc.onload = () => { try { emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY }); } catch (e) {} res(!!window.emailjs); };
+    sc.onerror = () => res(false);
+    document.head.appendChild(sc);
+  });
+}
+let flushing = false;
+async function flushQueue(manual) {
+  if (flushing || isSending) return;
+  if (!loadQueue().length) return;
+  if (!navigator.onLine) { if (manual) showToast('目前沒有網路，連上網路後會自動重送', true); return; }
+  flushing = true;
+  let sent = 0, failed = false;
+  try {
+    if (!(await ensureEmailjs())) { failed = true; return; }
+    for (const item of loadQueue()) {
+      try {
+        await Promise.race([
+          emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, item.params),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000))
+        ]);
+        sent++;
+        saveQueue(loadQueue().filter(x => x.key !== item.key));
+      } catch (e) { failed = true; console.log('補寄失敗:', e); break; }
+    }
+  } finally {
+    flushing = false;
+    renderQueueBanner();
+    if (sent) showToast('✅ 已自動補寄 ' + sent + ' 筆先前未送出的填單', false);
+    else if (manual && failed) showToast('補寄失敗，稍後會再試', true);
+  }
+}
+window.addEventListener('online', () => flushQueue(false));
+renderQueueBanner();
+setTimeout(() => flushQueue(false), 1500);
+
+// ===== v7：找相似過往案例 =====
+const SIMILAR_API = 'https://customer-service-model.onrender.com';
+const SIM_TOKEN_KEY = 'similarTokenV1';
+function simGetToken() { try { return localStorage.getItem(SIM_TOKEN_KEY) || ''; } catch (e) { return ''; } }
+function simSetToken(t) { try { if (t) localStorage.setItem(SIM_TOKEN_KEY, t); else localStorage.removeItem(SIM_TOKEN_KEY); } catch (e) {} }
+function simFetch(path, body, token, ms) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return fetch(SIMILAR_API + path, { method: 'POST', headers: headers, body: JSON.stringify(body), signal: ctl.signal })
+    .finally(() => clearTimeout(timer));
+}
+function simShowLogin(msg) {
+  const p = document.getElementById('similarPanel');
+  p.innerHTML = '<div class="sim-login"><div class="sim-note">' + escapeHtml(msg || '第一次使用請輸入「查詢密碼」（與問答系統相同），這支手機之後不用再輸入。') + '</div>' +
+    '<input type="password" id="simPw" placeholder="查詢密碼" autocomplete="off"><button type="button" id="simPwBtn">確認並查詢</button></div>';
+  document.getElementById('simPwBtn').onclick = simLogin;
+}
+async function simLogin() {
+  const pw = document.getElementById('simPw').value;
+  if (!pw) return;
+  const p = document.getElementById('similarPanel');
+  p.innerHTML = '<div class="sim-note">驗證中...（伺服器休眠時可能要等約 1 分鐘）</div>';
+  try {
+    const r = await simFetch('/api/form-token', { password: pw }, '', 70000);
+    const d = await r.json();
+    if (!r.ok || !d.token) { simShowLogin((d && d.error) || '驗證失敗'); return; }
+    simSetToken(d.token);
+    simSearch();
+  } catch (e) { simShowLogin('連線失敗，請確認網路後再試'); }
+}
+async function simSearch() {
+  const q = document.getElementById('f_phenomenon').value.trim();
+  const p = document.getElementById('similarPanel');
+  if (q.length < 6) { p.innerHTML = '<div class="sim-note">請先在上面描述異常現象（至少 6 個字）再查詢。</div>'; return; }
+  const token = simGetToken();
+  if (!token) { simShowLogin(); return; }
+  const btn = document.getElementById('btnSimilar'); btn.disabled = true;
+  p.innerHTML = '<div class="sim-note">查詢中...（伺服器休眠時可能要等約 1 分鐘）</div>';
+  try {
+    const r = await simFetch('/api/similar', { query: q }, token, 70000);
+    const d = await r.json();
+    if (r.status === 401) { simSetToken(''); simShowLogin('登入已失效，請重新輸入查詢密碼'); return; }
+    if (!r.ok) { p.innerHTML = '<div class="sim-note">' + escapeHtml(d.error || '查詢失敗') + '</div>'; return; }
+    simRender(d.cases || []);
+  } catch (e) {
+    p.innerHTML = '<div class="sim-note">連不上伺服器（可能沒有網路或伺服器還在啟動），稍後再按一次。不影響填單。</div>';
+  } finally { btn.disabled = false; }
+}
+function simRender(cases) {
+  const p = document.getElementById('similarPanel');
+  if (!cases.length) { p.innerHTML = '<div class="sim-note">沒有找到相近的過往案例。</div>'; return; }
+  let h = '<div class="sim-note">以下是最相近的過往案例，僅供參考，不會自動帶入表單：</div>';
+  cases.forEach(c => {
+    const st = c.status === 'open' ? '尚未結案' : (c.status === 'closed' ? '已結案' : '');
+    h += '<div class="sim-card"><div class="sim-top">#' + escapeHtml(String(c.seq || '')) + '　' + escapeHtml(c.date || '') + '　' + escapeHtml(c.device || '') + (st ? '　【' + st + '】' : '') + '</div>' +
+      '<div>' + escapeHtml(c.phenomenon || '') + '</div>' +
+      (c.root ? '<div><span class="sim-k">確認根因：</span>' + escapeHtml(c.root) + '</div>' : '') +
+      (c.action ? '<div><span class="sim-k">矯正行動：</span>' + escapeHtml(c.action) + '</div>' : '') + '</div>';
+  });
+  p.innerHTML = h;
+}
+document.getElementById('btnSimilar').addEventListener('click', simSearch);
 </script>
 
 </body>

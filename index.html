@@ -319,7 +319,12 @@
 
   <div class="field">
     <label>相關設備/型號</label>
-    <input type="text" id="f_device">
+    <select id="f_device">
+      <option value="">（請選擇機型）</option>
+      <option value="NFA-1007Ad">NFA-1007Ad</option>
+      <option value="NFA-1007c">NFA-1007c</option>
+      <option value="T08">T08</option>
+    </select>
   </div>
 
   <div class="field">
@@ -365,7 +370,7 @@ const CLOUDINARY_CLOUD_NAME = "de9677dp";
 const CLOUDINARY_UPLOAD_PRESET = "g0gnp6qv";
 const MAX_PHOTOS = 3;
 
-const APP_VERSION = 'v7 (2026-10-13)';
+const APP_VERSION = 'v8 (2026-10-19)';
 document.getElementById('appVersion').textContent = APP_VERSION;
 
 // 設定日期欄位預設為今天

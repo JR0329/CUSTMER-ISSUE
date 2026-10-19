@@ -319,12 +319,14 @@
 
   <div class="field">
     <label>相關設備/型號</label>
-    <select id="f_device">
+    <select id="f_device" onchange="toggleDeviceOther()">
       <option value="">（請選擇機型）</option>
       <option value="NFA-1007Ad">NFA-1007Ad</option>
       <option value="NFA-1007c">NFA-1007c</option>
       <option value="T08">T08</option>
+      <option value="__other__">其他（自行輸入）</option>
     </select>
+    <input type="text" id="f_device_other" placeholder="請輸入機型" style="display:none;margin-top:6px;">
   </div>
 
   <div class="field">
@@ -370,7 +372,7 @@ const CLOUDINARY_CLOUD_NAME = "de9677dp";
 const CLOUDINARY_UPLOAD_PRESET = "g0gnp6qv";
 const MAX_PHOTOS = 3;
 
-const APP_VERSION = 'v8 (2026-10-19)';
+const APP_VERSION = 'v8.1 (2026-10-19)';
 document.getElementById('appVersion').textContent = APP_VERSION;
 
 // 設定日期欄位預設為今天
@@ -677,10 +679,25 @@ function clearForm() {
   document.getElementById('f_customer_other').style.display = 'none';
   document.getElementById('f_receiver').value = '';
   document.getElementById('f_device').value = '';
+  document.getElementById('f_device_other').value = '';
+  document.getElementById('f_device_other').style.display = 'none';
   document.getElementById('f_cause').value = '';
   document.getElementById('f_action').value = '';
   document.getElementById('fallbackBox').classList.remove('show');
   lastCsv = null;
+}
+
+function toggleDeviceOther() {
+  const other = document.getElementById('f_device_other');
+  const isOther = document.getElementById('f_device').value === '__other__';
+  other.style.display = isOther ? 'block' : 'none';
+  if (isOther) other.focus(); else other.value = '';
+}
+
+function getDeviceValue() {
+  const v = document.getElementById('f_device').value;
+  if (v === '__other__') return document.getElementById('f_device_other').value.trim();
+  return v;
 }
 
 async function submitForm() {
@@ -702,7 +719,7 @@ async function submitForm() {
   const customerValue = getCustomerValue();
   const receiverValue = document.getElementById('f_receiver').value;
   const dateValue = document.getElementById('f_date').value;
-  const deviceValue = document.getElementById('f_device').value;
+  const deviceValue = getDeviceValue();
   const causeValue = document.getElementById('f_cause').value;
   const actionValue = document.getElementById('f_action').value;
 
